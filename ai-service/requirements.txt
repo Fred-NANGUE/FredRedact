@@ -1,0 +1,7 @@
+Flask>=3.1,<4
+python-dotenv>=1.0
+Pillow>=11
+PyPDF>=5
+python-docx>=1.1
+reportlab>=4
+pytesseract>=0.3.13

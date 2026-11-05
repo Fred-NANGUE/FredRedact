@@ -1,0 +1,157 @@
+### ============================================================
+### Tests API Membre 6 - extension VS Code "REST Client" (humao.rest-client)
+### Lancez `php artisan serve` puis cliquez sur "Send Request"
+### ============================================================
+
+@base = http://127.0.0.1:8000/api
+
+### 1. Connexion (adaptez la route du Membre 1)
+POST {{base}}/login
+Content-Type: application/json
+Accept: application/json
+
+{ "email": "aicha.nguema@etudiant.cm", "password": "password" }
+
+###
+@token = {{$dotenv BILLING_HTTP_TOKEN}}
+@admin = {{$dotenv BILLING_ADMIN_TOKEN}}
+### Les jetons sont fournis par le fichier .env local, jamais stockes dans ce fichier.
+
+### ---------------------- ETUDIANT ----------------------
+
+### Catalogue des offres (public)
+GET {{base}}/plans
+Accept: application/json
+
+### Mon abonnement + solde
+GET {{base}}/billing/subscription
+Authorization: Bearer {{token}}
+Accept: application/json
+
+### Historique de mes abonnements
+GET {{base}}/billing/subscriptions
+Authorization: Bearer {{token}}
+Accept: application/json
+
+### Souscrire a l'offre Premium (id 3)
+POST {{base}}/billing/subscribe
+Authorization: Bearer {{token}}
+Accept: application/json
+Content-Type: application/json
+
+{ "plan_id": 3, "mode_paiement": "mobile_money", "transaction_id": "TX-0001" }
+
+### Annuler mon abonnement
+POST {{base}}/billing/subscription/cancel
+Authorization: Bearer {{token}}
+Accept: application/json
+
+### Solde de tokens
+GET {{base}}/billing/tokens/balance
+Authorization: Bearer {{token}}
+Accept: application/json
+
+### Historique des tokens (filtre optionnel ?type=generation)
+GET {{base}}/billing/tokens/history
+Authorization: Bearer {{token}}
+Accept: application/json
+
+### Consommation par rapport
+GET {{base}}/billing/tokens/by-report
+Authorization: Bearer {{token}}
+Accept: application/json
+
+### ---------------------- ADMIN ----------------------
+
+### Toutes les offres
+GET {{base}}/admin/billing/plans
+Authorization: Bearer {{admin}}
+Accept: application/json
+
+### Creer une offre
+POST {{base}}/admin/billing/plans
+Authorization: Bearer {{admin}}
+Accept: application/json
+Content-Type: application/json
+
+{ "nom": "Etudiant+", "description": "Offre intermediaire", "prix": 9.90, "tokens_inclus": 50000, "duree_jours": 30, "actif": true }
+
+### Corriger le prix de Premium (id 3)
+PUT {{base}}/admin/billing/plans/3
+Authorization: Bearer {{admin}}
+Accept: application/json
+Content-Type: application/json
+
+{ "prix": 49.90 }
+
+### Desactiver / supprimer une offre
+DELETE {{base}}/admin/billing/plans/4
+Authorization: Bearer {{admin}}
+Accept: application/json
+
+### Liste des abonnements (filtres : statut, plan_id, q)
+GET {{base}}/admin/billing/subscriptions?statut=actif
+Authorization: Bearer {{admin}}
+Accept: application/json
+
+### Detail d'un abonnement
+GET {{base}}/admin/billing/subscriptions/2
+Authorization: Bearer {{admin}}
+Accept: application/json
+
+### Confirmer le paiement d'un abonnement en attente
+POST {{base}}/admin/billing/subscriptions/5/activate
+Authorization: Bearer {{admin}}
+Accept: application/json
+Content-Type: application/json
+
+{ "transaction_id": "TX-0001" }
+
+### Suspendre / reactiver / annuler
+POST {{base}}/admin/billing/subscriptions/2/suspend
+Authorization: Bearer {{admin}}
+Accept: application/json
+
+###
+POST {{base}}/admin/billing/subscriptions/2/reactivate
+Authorization: Bearer {{admin}}
+Accept: application/json
+
+###
+POST {{base}}/admin/billing/subscriptions/2/cancel
+Authorization: Bearer {{admin}}
+Accept: application/json
+
+### Attribuer une offre a un utilisateur (user 3, plan Pro)
+POST {{base}}/admin/billing/users/3/subscribe
+Authorization: Bearer {{admin}}
+Accept: application/json
+Content-Type: application/json
+
+{ "plan_id": 2 }
+
+### Solde + historique d'un utilisateur
+GET {{base}}/admin/billing/users/2/tokens
+Authorization: Bearer {{admin}}
+Accept: application/json
+
+### Recharge manuelle
+POST {{base}}/admin/billing/users/2/tokens/credit
+Authorization: Bearer {{admin}}
+Accept: application/json
+Content-Type: application/json
+
+{ "quantite": 20000, "description": "Geste commercial" }
+
+### Ajustement (positif ou negatif)
+POST {{base}}/admin/billing/users/2/tokens/adjust
+Authorization: Bearer {{admin}}
+Accept: application/json
+Content-Type: application/json
+
+{ "quantite": -500, "description": "Correction d'une erreur" }
+
+### Statistiques
+GET {{base}}/admin/billing/stats
+Authorization: Bearer {{admin}}
+Accept: application/json
