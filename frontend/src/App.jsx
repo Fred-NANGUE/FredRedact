@@ -187,13 +187,15 @@ export default function App() {
             <button className="header-profile" onClick={() => navigate('profile')} aria-label="Ouvrir mon profil"><UserAvatar name={profile?.name} photoUrl={profile?.google_avatar_url} label={profile?.name} className="avatar-small" /><span className="header-role">{role === 'admin' ? 'Admin' : 'Étudiant'}</span><ArrowUpRight size={14} /></button>
           </div>
         </header>
-        <main className="page-content">
-          <div className="page-heading">
-            <div className="page-heading-icon"><CurrentIcon size={22} /></div>
-            <div><h1>{title[0]}</h1><p>{title[1]}</p></div>
-          </div>
+        <main className={page === 'assistant' ? 'page-content page-content-assistant' : 'page-content'}>
+          {page !== 'assistant' && (
+            <div className="page-heading">
+              <div className="page-heading-icon"><CurrentIcon size={22} /></div>
+              <div><h1>{title[0]}</h1><p>{title[1]}</p></div>
+            </div>
+          )}
           <Alert>{error}</Alert>
-          <div className="page-body">
+          <div className={page === 'assistant' ? 'page-body assistant-page-body' : 'page-body'}>
             {page === 'plans' && <Plans onGoAccount={() => navigate('account')} />}
             {page === 'account' && <Account />}
             {page === 'internships' && <Internships onOpenReports={() => navigate('reports')} />}

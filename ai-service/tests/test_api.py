@@ -39,6 +39,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["text"], "Réponse factuelle")
         self.assertEqual(_gemini.call_args.kwargs["history"][0]["question"], "Comment commencer ?")
+        self.assertIn("Markdown lisible", _gemini.call_args.args[0])
 
     def test_json_endpoints_reject_missing_fields(self):
         response = self.client.post("/api/generation", headers=self.headers, json={})

@@ -121,7 +121,10 @@ def chat(data):
     context = data.get("context", {})
     prompt = (
         f"Contexte du rapport fourni : {json.dumps(context, ensure_ascii=False)}\n"
-        f"Question de l’étudiant : {data['question']}"
+        f"Question de l’étudiant : {data['question']}\n"
+        "Réponds en français, de façon directe, claire et adaptée au contexte. "
+        "Structure si utile avec du Markdown lisible (titres courts, listes ou étapes), sans en abuser. "
+        "Si la demande manque de contexte, pose une question ciblée plutôt que de supposer."
     )
     text, tokens_used = _gemini(prompt, history=history)
     return {"text": text, "tokens_used": tokens_used, "model": current_app.config["GEMINI_MODEL"]}
