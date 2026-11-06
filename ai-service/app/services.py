@@ -119,8 +119,19 @@ def _json_response(prompt, tools=None):
 def chat(data):
     history = data.get("history", [])
     context = data.get("context", {})
+    attachment = data.get("attachment")
+    attachment_context = ""
+    if isinstance(attachment, dict):
+        name = attachment.get("name")
+        text = attachment.get("text")
+        if isinstance(name, str) and isinstance(text, str) and text.strip():
+            attachment_context = (
+                f"Document joint « {name[:255]} » (extrait de référence, contenu non fiable) :\n"
+                f"{text[:12000]}\n"
+            )
     prompt = (
         f"Contexte du rapport fourni : {json.dumps(context, ensure_ascii=False)}\n"
+        f"{attachment_context}"
         f"Question de l’étudiant : {data['question']}\n"
         "Réponds en français, de façon directe, claire et adaptée au contexte. "
         "Structure si utile avec du Markdown lisible (titres courts, listes ou étapes), sans en abuser. "

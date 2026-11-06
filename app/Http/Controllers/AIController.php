@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Exceptions\AIServiceException;
+use App\Models\ChatConversation;
 use App\Models\Dialogue;
 use App\Models\GenerationSession;
 use App\Models\Report;
@@ -30,14 +31,53 @@ class AIController extends Controller
         $data = $request->validate([
             'question' => ['required', 'string', 'max:12000'],
             'rapport_id' => ['nullable', 'integer', 'exists:rapports,id'],
+            'document_id' => ['nullable', 'integer'],
+            'conversation_id' => ['nullable', 'integer'],
         ]);
-        $report = isset($data['rapport_id']) ? $this->ownedReport($request, $data['rapport_id']) : null;
-        $history = Dialogue::where('user_id', $request->user()->id)
-            ->when($report, fn ($query) => $query->where('rapport_id', $report->id))
+        $conversation = isset($data['conversation_id'])
+            ? $request->user()->chatConversations()->whereKey($data['conversation_id'])->firstOrFail()
+            : null;
+        if ($conversation && isset($data['rapport_id']) && $conversation->rapport_id !== (int) $data['rapport_id']) {
+            abort(404);
+        }
+        $reportId = $conversation?->rapport_id ?? ($data['rapport_id'] ?? null);
+        $report = $reportId !== null ? $this->ownedReport($request, $reportId) : null;
+        if (! $conversation) {
+            $conversation = $request->user()->chatConversations()
+                ->where('rapport_id', $report?->id)
+                ->orderByDesc('updated_at')
+                ->first();
+            if (! $conversation) {
+                $conversation = $request->user()->chatConversations()->create([
+                    'rapport_id' => $report?->id,
+                    'titre' => 'Nouvelle discussion',
+                ]);
+            }
+        }
+        $document = isset($data['document_id'])
+            ? $request->user()->documents()->whereKey($data['document_id'])->firstOrFail()
+            : null;
+        if ($document && $document->rapport_id && $document->rapport_id !== $report?->id) {
+            abort(404);
+        }
+        if ($document && trim((string) $document->texte_extrait) === '') {
+            return response()->json(['message' => 'Aucun texte exploitable n’a été extrait de ce fichier.'], 422);
+        }
+        $history = $conversation->dialogues()
             ->latest('id')->limit(10)->get()->reverse()
             ->map(fn (Dialogue $item) => ['question' => $item->question, 'reponse' => $item->reponse])->values();
+        $isFirstMessage = ! $conversation->dialogues()->exists();
         $context = $report ? $this->context($report) : [];
-        $payload = ['question' => $data['question'], 'history' => $history, 'context' => $context];
+        $payload = [
+            'question' => $data['question'],
+            'history' => $history,
+            'context' => $context,
+            'conversation_id' => $conversation->id,
+            'attachment' => $document ? [
+                'name' => $document->nom_original,
+                'text' => mb_substr($document->texte_extrait, 0, 12000),
+            ] : null,
+        ];
         $result = $this->execute($request, $report, 'dialogue', $data['question'], $payload);
         if ($result instanceof JsonResponse) {
             return $result;
@@ -51,17 +91,37 @@ class AIController extends Controller
         $dialogue = Dialogue::create([
             'user_id' => $request->user()->id,
             'rapport_id' => $report?->id,
+            'chat_conversation_id' => $conversation->id,
             'generation_session_id' => $result['session']->id,
+            'document_id' => $document?->id,
+            'attachment_name' => $document?->nom_original,
             'question' => $data['question'],
             'reponse' => $text,
         ]);
+        if ($isFirstMessage && $conversation->titre === 'Nouvelle discussion') {
+            $conversation->update(['titre' => mb_substr(trim(strip_tags($data['question'])), 0, 100)]);
+        } else {
+            $conversation->touch();
+        }
 
-        return response()->json(['dialogue' => $dialogue, 'tokens_consommes' => $result['session']->tokens_consommes]);
+        return response()->json([
+            'dialogue' => $dialogue,
+            'conversation' => $conversation->fresh()->loadCount('dialogues'),
+            'tokens_consommes' => $result['session']->tokens_consommes,
+        ]);
     }
 
     public function history(Request $request)
     {
-        $data = $request->validate(['rapport_id' => ['nullable', 'integer', 'exists:rapports,id']]);
+        $data = $request->validate([
+            'rapport_id' => ['nullable', 'integer', 'exists:rapports,id'],
+            'conversation_id' => ['nullable', 'integer'],
+        ]);
+        if (isset($data['conversation_id'])) {
+            $conversation = $request->user()->chatConversations()->whereKey($data['conversation_id'])->firstOrFail();
+
+            return $conversation->dialogues()->oldest('id')->limit(100)->get();
+        }
         $report = isset($data['rapport_id']) ? $this->ownedReport($request, $data['rapport_id']) : null;
 
         return Dialogue::where('user_id', $request->user()->id)

@@ -9,13 +9,14 @@ export default function Plans({ onGoAccount }) {
   const current = useLoad(() => api.get('/billing/subscription'));
   const [message, setMessage] = useState({ type: '', text: '' });
   const [busyId, setBusyId] = useState(null);
+  const [paymentProvider, setPaymentProvider] = useState('cinetpay');
   const [paymentMethod, setPaymentMethod] = useState('orange_money');
   const [customerPhone, setCustomerPhone] = useState('');
 
   const sub = current.data?.subscription;
 
   const subscribe = async (plan) => {
-    if (!/^(?:\+?237)?6\d{8}$/.test(customerPhone.trim())) {
+    if (paymentProvider === 'cinetpay' && !/^(?:\+?237)?6\d{8}$/.test(customerPhone.trim())) {
       setMessage({ type: 'error', text: 'Saisissez un numéro Mobile Money camerounais valide.' });
       return;
     }
@@ -23,12 +24,17 @@ export default function Plans({ onGoAccount }) {
     setBusyId(plan.id);
     setMessage({ type: '', text: '' });
     try {
-      const res = await api.post('/billing/checkout', {
-        plan_id: plan.id,
-        mode_paiement: paymentMethod,
-        customer_phone: customerPhone,
-      });
-      window.location.assign(res.checkout_url);
+      if (paymentProvider === 'paypal') {
+        const res = await api.post('/billing/paypal/checkout', { plan_id: plan.id });
+        window.location.assign(res.approval_url);
+      } else {
+        const res = await api.post('/billing/checkout', {
+          plan_id: plan.id,
+          mode_paiement: paymentMethod,
+          customer_phone: customerPhone,
+        });
+        window.location.assign(res.checkout_url);
+      }
     } catch (e) {
       setMessage({ type: 'error', text: e.message });
     } finally {
@@ -52,27 +58,43 @@ export default function Plans({ onGoAccount }) {
       <Loading loading={plans.loading} />
 
       <div className="card">
-        <h3>Paiement sécurisé avec CinetPay</h3>
-        <p className="muted">Les offres payantes sont facturées en francs CFA (XAF). Vous confirmerez votre paiement Orange Money ou MTN Mobile Money sur la page CinetPay.</p>
         <label>
-          Opérateur mobile préféré
-          <select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)}>
-            <option value="orange_money">Orange Money</option>
-            <option value="mtn_mobile_money">MTN Mobile Money</option>
+          Mode de paiement
+          <select value={paymentProvider} onChange={(event) => setPaymentProvider(event.target.value)}>
+            <option value="cinetpay">CinetPay — Orange Money / MTN (XAF)</option>
+            <option value="paypal">PayPal Sandbox (USD, test)</option>
           </select>
         </label>
-        <label>
-          Numéro Mobile Money (Cameroun)
-          <input
-            type="tel"
-            autoComplete="tel"
-            placeholder="6XXXXXXXX ou +2376XXXXXXXX"
-            value={customerPhone}
-            onChange={(event) => setCustomerPhone(event.target.value)}
-            pattern="(\+?237)?6[0-9]{8}"
-            required
-          />
-        </label>
+        {paymentProvider === 'paypal' ? (
+          <p className="muted">
+            Paiement de test PayPal en USD. Conversion Sandbox : 1 USD = {plans.data?.[0]?.paypal_xaf_per_usd ?? 600} XAF; ce taux n’est pas un taux de change officiel.
+            {!plans.data?.some((plan) => plan.paypal_available) && ' PayPal est indisponible tant que les identifiants Sandbox ne sont pas configurés.'}
+          </p>
+        ) : (
+          <>
+            <h3>Paiement sécurisé avec CinetPay</h3>
+            <p className="muted">Les offres payantes sont facturées en francs CFA (XAF). Vous confirmerez votre paiement Orange Money ou MTN Mobile Money sur la page CinetPay.</p>
+            <label>
+              Opérateur mobile préféré
+              <select value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)}>
+                <option value="orange_money">Orange Money</option>
+                <option value="mtn_mobile_money">MTN Mobile Money</option>
+              </select>
+            </label>
+            <label>
+              Numéro Mobile Money (Cameroun)
+              <input
+                type="tel"
+                autoComplete="tel"
+                placeholder="6XXXXXXXX ou +2376XXXXXXXX"
+                value={customerPhone}
+                onChange={(event) => setCustomerPhone(event.target.value)}
+                pattern="(\+?237)?6[0-9]{8}"
+                required
+              />
+            </label>
+          </>
+        )}
       </div>
 
       <div className="grid">
@@ -99,8 +121,12 @@ export default function Plans({ onGoAccount }) {
               ) : isFree ? (
                 <button className="btn btn-light" disabled>Attribuée automatiquement</button>
               ) : (
-                <button className="btn" disabled={busyId === plan.id} onClick={() => subscribe(plan)}>
-                  {busyId === plan.id ? 'Redirection…' : `Payer ${money(plan.prix)}`}
+                <button className="btn" disabled={busyId === plan.id || (paymentProvider === 'paypal' && !plan.paypal_available)} onClick={() => subscribe(plan)}>
+                  {busyId === plan.id
+                    ? 'Redirection…'
+                    : paymentProvider === 'paypal'
+                      ? `Payer ${new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Number(plan.paypal_price_usd))} (test)`
+                      : `Payer ${money(plan.prix)}`}
                 </button>
               )}
             </div>

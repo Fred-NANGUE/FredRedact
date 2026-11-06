@@ -34,12 +34,15 @@ class ApiTests(unittest.TestCase):
                 "question": "Et ensuite ?",
                 "context": {"theme": "Suivi de bases de données"},
                 "history": [{"question": "Comment commencer ?", "reponse": "Présentez le contexte."}],
+                "attachment": {"name": "consignes.pdf", "text": "Décrire les objectifs du stage."},
             },
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json["text"], "Réponse factuelle")
         self.assertEqual(_gemini.call_args.kwargs["history"][0]["question"], "Comment commencer ?")
         self.assertIn("Markdown lisible", _gemini.call_args.args[0])
+        self.assertIn("consignes.pdf", _gemini.call_args.args[0])
+        self.assertIn("Décrire les objectifs du stage.", _gemini.call_args.args[0])
 
     def test_json_endpoints_reject_missing_fields(self):
         response = self.client.post("/api/generation", headers=self.headers, json={})

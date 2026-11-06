@@ -55,14 +55,14 @@ class SubscriptionService
                 'date_fin'       => $plan->duree_jours ? today()->addDays($plan->duree_jours) : null,
                 'tokens_alloues' => $plan->tokens_inclus,
                 'prix_paye'      => 0,
-                'devise'         => 'XAF',
+                'devise'         => $payment['devise'] ?? 'XAF',
                 'statut'         => Subscription::EN_ATTENTE,
                 'mode_paiement'  => $payment['mode_paiement'] ?? null,
                 'transaction_id' => $payment['transaction_id'] ?? null,
             ]);
 
             if ($confirmed) {
-                $this->finalizeActivation($subscription);
+                $this->finalizeActivation($subscription, $payment);
             }
 
             return $subscription->fresh('plan');
@@ -70,12 +70,15 @@ class SubscriptionService
     }
 
     /** Confirme le paiement d'un abonnement "en_attente" et l'active. */
-    public function activate(Subscription $subscription, ?string $transactionId = null): Subscription
+    public function activate(Subscription $subscription, ?string $transactionId = null, array $payment = []): Subscription
     {
-        return DB::transaction(function () use ($subscription, $transactionId) {
+        return DB::transaction(function () use ($subscription, $transactionId, $payment) {
             $this->lockUser($subscription->user_id);
 
             $subscription = Subscription::with('plan')->lockForUpdate()->findOrFail($subscription->id);
+            if ($subscription->statut === Subscription::ACTIF && $transactionId === $subscription->transaction_id) {
+                return $subscription->fresh('plan');
+            }
             if ($subscription->statut !== Subscription::EN_ATTENTE) {
                 throw ValidationException::withMessages(['subscription' => "Seul un abonnement en attente peut être activé."]);
             }
@@ -86,9 +89,11 @@ class SubscriptionService
                 'date_fin'       => $plan->duree_jours ? today()->addDays($plan->duree_jours) : null,
                 'tokens_alloues' => $plan->tokens_inclus,
                 'transaction_id' => $transactionId ?? $subscription->transaction_id,
+                'prix_paye'      => $payment['prix_paye'] ?? $subscription->prix_paye,
+                'devise'         => $payment['devise'] ?? $subscription->devise,
             ])->save();
 
-            $this->finalizeActivation($subscription);
+            $this->finalizeActivation($subscription, $payment);
 
             return $subscription->fresh('plan');
         });
@@ -237,7 +242,7 @@ class SubscriptionService
     /* ------------------------------------------------------------------ */
 
     /** Active la souscription : remplace les anciennes, alloue les tokens. */
-    private function finalizeActivation(Subscription $subscription): void
+    private function finalizeActivation(Subscription $subscription, array $payment = []): void
     {
         $plan = $subscription->plan ?? $subscription->load('plan')->plan;
 
@@ -256,8 +261,8 @@ class SubscriptionService
 
         $subscription->update([
             'statut'    => Subscription::ACTIF,
-            'prix_paye' => $plan->prix,
-            'devise'    => 'XAF',
+            'prix_paye' => $payment['prix_paye'] ?? $plan->prix,
+            'devise'    => $payment['devise'] ?? $subscription->devise ?? 'XAF',
         ]);
 
         if ($subscription->tokens_alloues > 0) {

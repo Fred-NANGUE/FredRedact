@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Internship;
+use App\Models\Subscription;
 use App\Models\SubscriptionPlan;
 use App\Models\TokenUsage;
 use App\Models\User;
@@ -256,6 +257,140 @@ class ProjectWorkflowTest extends TestCase
         $this->assertDatabaseCount('token_usages', 1);
     }
 
+    public function test_paypal_sandbox_checkout_converts_xaf_to_usd_and_activates_only_after_verified_capture(): void
+    {
+        config([
+            'services.paypal.client_id' => 'sandbox-client',
+            'services.paypal.client_secret' => 'sandbox-secret',
+            'services.paypal.xaf_per_usd' => 600,
+        ]);
+        $user = User::factory()->create();
+        $plan = SubscriptionPlan::create([
+            'nom' => 'Pro',
+            'prix' => 5000,
+            'tokens_inclus' => 50000,
+            'duree_jours' => 30,
+            'actif' => true,
+        ]);
+        Sanctum::actingAs($user);
+
+        $subscriptionId = null;
+        $httpCalls = [];
+        Http::fake(function ($request) use (&$subscriptionId, &$httpCalls) {
+            $httpCalls[] = $request->url();
+            if (str_ends_with($request->url(), '/v1/oauth2/token')) {
+                return Http::response(['access_token' => 'sandbox-access-token']);
+            }
+            if ($request->method() === 'POST' && str_ends_with($request->url(), '/v2/checkout/orders')) {
+                $unit = $request->data()['purchase_units'][0];
+                $subscriptionId = $unit['custom_id'];
+                $this->assertSame('8.33', $unit['amount']['value']);
+
+                return Http::response([
+                    'id' => 'PAYPAL-ORDER-123',
+                    'links' => [['rel' => 'approve', 'href' => 'https://www.sandbox.paypal.com/checkoutnow?token=PAYPAL-ORDER-123']],
+                ]);
+            }
+            if ($request->method() === 'GET' && str_ends_with($request->url(), '/v2/checkout/orders/PAYPAL-ORDER-123')) {
+                return Http::response([
+                    'id' => 'PAYPAL-ORDER-123',
+                    'status' => 'APPROVED',
+                    'purchase_units' => [[
+                        'custom_id' => (string) $subscriptionId,
+                        'amount' => ['currency_code' => 'USD', 'value' => '8.33'],
+                    ]],
+                ]);
+            }
+            if ($request->method() === 'POST' && str_ends_with($request->url(), '/v2/checkout/orders/PAYPAL-ORDER-123/capture')) {
+                return Http::response([
+                    'id' => 'PAYPAL-ORDER-123',
+                    'status' => 'COMPLETED',
+                    'purchase_units' => [[
+                        'custom_id' => (string) $subscriptionId,
+                        'payments' => ['captures' => [[
+                            'status' => 'COMPLETED',
+                            'amount' => ['currency_code' => 'USD', 'value' => '8.33'],
+                        ]]],
+                    ]],
+                ]);
+            }
+
+            return Http::response([], 404);
+        });
+
+        $checkout = $this->postJson('/api/billing/paypal/checkout', ['plan_id' => $plan->id])
+            ->assertCreated()
+            ->assertJsonPath('approval_url', 'https://www.sandbox.paypal.com/checkoutnow?token=PAYPAL-ORDER-123');
+        $subscription = Subscription::where('user_id', $user->id)->where('mode_paiement', 'paypal')->firstOrFail();
+        $this->assertSame('en_attente', $subscription->statut);
+        $this->assertSame('USD', $subscription->devise);
+        $this->assertSame('0.00', $subscription->prix_paye);
+
+        $capturePayload = ['order_id' => 'PAYPAL-ORDER-123', 'subscription_id' => $subscription->id];
+        $this->postJson('/api/billing/paypal/capture', $capturePayload)
+            ->assertOk()
+            ->assertJsonPath('subscription.statut', 'actif')
+            ->assertJsonPath('subscription.devise', 'USD')
+            ->assertJsonPath('subscription.prix_paye', '8.33');
+        $this->postJson('/api/billing/paypal/capture', $capturePayload)
+            ->assertOk()
+            ->assertJsonPath('message', 'Paiement déjà confirmé.');
+        $this->assertSame(1, count(array_filter($httpCalls, fn ($url) => str_ends_with($url, '/v2/checkout/orders/PAYPAL-ORDER-123/capture'))));
+        $this->assertDatabaseHas('subscriptions', [
+            'id' => $subscription->id,
+            'transaction_id' => 'PAYPAL-ORDER-123',
+            'statut' => 'actif',
+            'prix_paye' => 8.33,
+            'devise' => 'USD',
+        ]);
+    }
+
+    public function test_paypal_capture_rejects_order_amount_mismatch_without_activating_subscription(): void
+    {
+        config([
+            'services.paypal.client_id' => 'sandbox-client',
+            'services.paypal.client_secret' => 'sandbox-secret',
+            'services.paypal.xaf_per_usd' => 600,
+        ]);
+        $user = User::factory()->create();
+        $plan = SubscriptionPlan::create([
+            'nom' => 'Pro',
+            'prix' => 5000,
+            'tokens_inclus' => 50000,
+            'duree_jours' => 30,
+            'actif' => true,
+        ]);
+        $subscription = app(SubscriptionService::class)->subscribe($user, $plan, [
+            'force_pending' => true,
+            'mode_paiement' => 'paypal',
+            'devise' => 'USD',
+        ]);
+        Sanctum::actingAs($user);
+
+        Http::fake([
+            'https://api-m.sandbox.paypal.com/v1/oauth2/token' => Http::response(['access_token' => 'sandbox-access-token']),
+            'https://api-m.sandbox.paypal.com/v2/checkout/orders/PAYPAL-ORDER-456' => Http::response([
+                'id' => 'PAYPAL-ORDER-456',
+                'status' => 'APPROVED',
+                'purchase_units' => [[
+                    'custom_id' => (string) $subscription->id,
+                    'amount' => ['currency_code' => 'USD', 'value' => '9.99'],
+                ]],
+            ]),
+        ]);
+
+        $this->postJson('/api/billing/paypal/capture', [
+            'order_id' => 'PAYPAL-ORDER-456',
+            'subscription_id' => $subscription->id,
+        ])->assertStatus(502);
+        Http::assertNotSent(fn ($request) => str_ends_with($request->url(), '/capture'));
+        $this->assertDatabaseHas('subscriptions', [
+            'id' => $subscription->id,
+            'statut' => 'en_attente',
+            'transaction_id' => $subscription->transaction_id,
+        ]);
+    }
+
     public function test_student_can_manage_owned_stage_report_and_section_versions(): void
     {
         $user = User::factory()->create();
@@ -443,18 +578,39 @@ class ProjectWorkflowTest extends TestCase
         $user = User::factory()->create();
         app(SubscriptionService::class)->ensureFreeSubscription($user);
         Sanctum::actingAs($user);
+        $document = $user->documents()->create([
+            'nom_original' => 'consignes.pdf',
+            'chemin' => 'documents/'.$user->id.'/consignes.pdf',
+            'mime_type' => 'application/pdf',
+            'taille_bytes' => 1024,
+            'texte_extrait' => 'Présenter les objectifs du stage.',
+        ]);
 
         $this->mock(AIService::class)
             ->shouldReceive('invoke')
             ->once()
-            ->with('/api/dialogue', \Mockery::type('array'))
+            ->with('/api/dialogue', \Mockery::on(fn (array $payload) => $payload['attachment'] === [
+                'name' => 'consignes.pdf',
+                'text' => 'Présenter les objectifs du stage.',
+            ]))
             ->andReturn(['text' => 'Organisez votre rapport en chapitres.']);
 
-        $this->postJson('/api/ai/chat', ['question' => 'Comment commencer ?'])
+        $this->postJson('/api/ai/chat', [
+            'question' => 'Comment commencer ?',
+            'document_id' => $document->id,
+        ])
             ->assertOk()
             ->assertJsonPath('dialogue.reponse', 'Organisez votre rapport en chapitres.');
 
         $this->assertDatabaseHas('dialogues', ['user_id' => $user->id, 'question' => 'Comment commencer ?']);
+        $dialogue = \App\Models\Dialogue::where('user_id', $user->id)->firstOrFail();
+        $this->assertSame($document->id, $dialogue->document_id);
+        $this->assertSame('consignes.pdf', $dialogue->attachment_name);
+        $conversation = $user->chatConversations()->firstOrFail();
+        $this->assertSame('Comment commencer ?', $conversation->titre);
+        $this->getJson('/api/ai/chat?conversation_id='.$conversation->id)
+            ->assertOk()
+            ->assertJsonPath('0.attachment_name', 'consignes.pdf');
         $this->assertDatabaseHas('token_usages', [
             'user_id' => $user->id,
             'subscription_id' => $user->subscriptions()->first()->id,
@@ -463,5 +619,127 @@ class ProjectWorkflowTest extends TestCase
         $movements = (int) TokenUsage::where('user_id', $user->id)->sum('quantite');
         $this->assertLessThan(5000, app(TokenService::class)->balance($user));
         $this->assertSame($movements, app(TokenService::class)->balance($user));
+    }
+
+    public function test_ai_chat_cannot_attach_another_users_document(): void
+    {
+        $owner = User::factory()->create();
+        $otherUser = User::factory()->create();
+        SubscriptionPlan::create([
+            'nom' => 'Free',
+            'prix' => 0,
+            'tokens_inclus' => 5000,
+            'duree_jours' => null,
+            'actif' => true,
+        ]);
+        app(SubscriptionService::class)->ensureFreeSubscription($otherUser);
+        $document = $owner->documents()->create([
+            'nom_original' => 'private.pdf',
+            'chemin' => 'documents/'.$owner->id.'/private.pdf',
+            'mime_type' => 'application/pdf',
+            'taille_bytes' => 1024,
+            'texte_extrait' => 'Données privées.',
+        ]);
+        Sanctum::actingAs($otherUser);
+
+        $this->postJson('/api/ai/chat', [
+            'question' => 'Résume ce fichier.',
+            'document_id' => $document->id,
+        ])->assertNotFound();
+    }
+
+    public function test_student_can_manage_private_named_chat_conversations(): void
+    {
+        $user = User::factory()->create();
+        $otherUser = User::factory()->create();
+        Sanctum::actingAs($user);
+
+        $conversation = $this->postJson('/api/ai/conversations', [
+            'titre' => 'Préparer la soutenance',
+        ])->assertCreated()
+            ->assertJsonPath('titre', 'Préparer la soutenance')
+            ->json();
+
+        $this->getJson('/api/ai/conversations')
+            ->assertOk()
+            ->assertJsonPath('0.id', $conversation['id']);
+        $this->putJson('/api/ai/conversations/'.$conversation['id'], [
+            'titre' => 'Préparation orale',
+        ])->assertOk()->assertJsonPath('titre', 'Préparation orale');
+
+        Sanctum::actingAs($otherUser);
+        $this->getJson('/api/ai/chat?conversation_id='.$conversation['id'])->assertNotFound();
+        $this->putJson('/api/ai/conversations/'.$conversation['id'], ['titre' => 'Vol'])->assertNotFound();
+        $this->deleteJson('/api/ai/conversations/'.$conversation['id'])->assertNotFound();
+
+        Sanctum::actingAs($user);
+        $this->deleteJson('/api/ai/conversations/'.$conversation['id'])->assertOk();
+        $this->assertDatabaseMissing('chat_conversations', ['id' => $conversation['id']]);
+    }
+
+    public function test_chat_document_picker_returns_only_the_users_extractable_documents(): void
+    {
+        $user = User::factory()->create();
+        $otherUser = User::factory()->create();
+        $document = $user->documents()->create([
+            'nom_original' => 'guide.pdf',
+            'chemin' => 'documents/'.$user->id.'/guide.pdf',
+            'mime_type' => 'application/pdf',
+            'taille_bytes' => 1024,
+            'texte_extrait' => 'Texte disponible.',
+        ]);
+        $otherUser->documents()->create([
+            'nom_original' => 'private.pdf',
+            'chemin' => 'documents/'.$otherUser->id.'/private.pdf',
+            'mime_type' => 'application/pdf',
+            'taille_bytes' => 1024,
+            'texte_extrait' => 'Texte privé.',
+        ]);
+        Sanctum::actingAs($user);
+
+        $this->getJson('/api/ai/documents')
+            ->assertOk()
+            ->assertJsonCount(1)
+            ->assertJsonPath('0.id', $document->id)
+            ->assertJsonMissingPath('0.texte_extrait');
+    }
+
+    public function test_ai_chat_history_is_isolated_between_named_conversations(): void
+    {
+        SubscriptionPlan::create([
+            'nom' => 'Free',
+            'prix' => 0,
+            'tokens_inclus' => 5000,
+            'duree_jours' => null,
+            'actif' => true,
+        ]);
+        $user = User::factory()->create();
+        app(SubscriptionService::class)->ensureFreeSubscription($user);
+        $first = $user->chatConversations()->create(['titre' => 'Première discussion']);
+        $second = $user->chatConversations()->create(['titre' => 'Deuxième discussion']);
+        $first->dialogues()->create([
+            'user_id' => $user->id,
+            'question' => 'Question privée du premier fil',
+            'reponse' => 'Réponse privée du premier fil',
+        ]);
+        Sanctum::actingAs($user);
+
+        $this->mock(AIService::class)
+            ->shouldReceive('invoke')
+            ->once()
+            ->with('/api/dialogue', \Mockery::on(fn (array $payload) => $payload['conversation_id'] === $second->id && $payload['history']->isEmpty()))
+            ->andReturn(['text' => 'Réponse du second fil.']);
+
+        $this->postJson('/api/ai/chat', [
+            'question' => 'Nouvelle question',
+            'conversation_id' => $second->id,
+        ])->assertOk()
+            ->assertJsonPath('dialogue.chat_conversation_id', $second->id)
+            ->assertJsonPath('conversation.titre', 'Deuxième discussion');
+
+        $this->getJson('/api/ai/chat?conversation_id='.$second->id)
+            ->assertOk()
+            ->assertJsonCount(1)
+            ->assertJsonMissing(['question' => 'Question privée du premier fil']);
     }
 }

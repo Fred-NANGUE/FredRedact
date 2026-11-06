@@ -6,11 +6,11 @@ FredRedact est une application de gestion des stages et de rédaction de rapport
 
 - Comptes étudiants et administrateurs, authentification, profil et réinitialisation de mot de passe.
 - Gestion des stages, rapports, chapitres, sections et versions.
-- Assistant Gemini pour le dialogue, les plans, la rédaction et la recherche documentaire.
+- Assistant Gemini avec discussions nommées, documents joints et sélection de fichiers importés, dictée et conversation vocale (selon le navigateur), génération de plans, rédaction et recherche documentaire.
 - Import de PDF, Word et images; extraction de texte et OCR.
 - Export des rapports en PDF et Word.
 - Offres Free, Pro et Premium, crédits et consommation de tokens.
-- Paiement Mobile Money via CinetPay (configuration nécessaire).
+- Paiement Mobile Money via CinetPay et flux PayPal Checkout Sandbox en USD (configurations nécessaires).
 
 ## Prérequis
 
@@ -38,7 +38,7 @@ php artisan key:generate
 
 Choisissez **une seule** méthode :
 
-1. **Base neuve avec le dump XAMPP** : dans phpMyAdmin, importez `fredredact_database.sql` dans une base vide. Configurez ensuite `DB_CONNECTION=mysql`, `DB_HOST=127.0.0.1`, `DB_PORT=3306`, `DB_DATABASE=fredredact`, `DB_USERNAME` et `DB_PASSWORD` dans `.env`. Ne restaurez jamais ce dump par-dessus une base contenant des données.
+1. **Base neuve avec le dump XAMPP** : dans phpMyAdmin, importez `fredredact_database.sql` dans une base vide. Configurez ensuite `DB_CONNECTION=mysql`, `DB_HOST=127.0.0.1`, `DB_PORT=3306`, `DB_DATABASE=fredredact`, `DB_USERNAME` et `DB_PASSWORD` dans `.env`, puis exécutez `php artisan migrate` pour appliquer les migrations ajoutées depuis la création du dump. Ne restaurez jamais ce dump par-dessus une base contenant des données.
 2. **Création par migrations** : configurez la connexion MySQL dans `.env`, puis exécutez `php artisan migrate --seed`. Pour SQLite, créez `database\database.sqlite`, configurez `DB_CONNECTION=sqlite` et lancez la même commande.
 
 Pour une ancienne base XAMPP avec des données à conserver, consultez les scripts `xampp_fix_users_name.sql` et `xampp_fix_internships.sql`. Sauvegardez la base avant toute modification; n’importez pas le dump de base neuve dans cette base.
@@ -49,7 +49,8 @@ Les fichiers `.env` locaux ne doivent jamais être commités.
 
 - **Google** (facultatif) : créez un identifiant OAuth de type application Web, autorisez les origines utilisées (par exemple `http://localhost:5173` et `http://127.0.0.1:5173`), puis renseignez le même `GOOGLE_CLIENT_ID` dans `.env` et `VITE_GOOGLE_CLIENT_ID` dans `frontend\.env`.
 - **E-mail** (facultatif en développement) : configurez `MAIL_MAILER`, `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD` et `MAIL_FROM_ADDRESS` dans `.env`. Pour Gmail, utilisez un mot de passe d’application; ne le mettez ni dans le code ni dans Git.
-- **Paiement** (facultatif) : renseignez `CINETPAY_API_KEY` et `CINETPAY_SITE_ID`. Les notifications de paiement requièrent une URL publique HTTPS configurée dans `APP_URL`; un serveur local seul ne peut pas recevoir le webhook.
+- **CinetPay** (facultatif) : renseignez `CINETPAY_API_KEY` et `CINETPAY_SITE_ID`. Les notifications de paiement requièrent une URL publique HTTPS configurée dans `APP_URL`; un serveur local seul ne peut pas recevoir le webhook.
+- **PayPal Sandbox** (facultatif, tests uniquement) : créez une application REST Sandbox dans le tableau de bord développeur PayPal, puis renseignez `PAYPAL_CLIENT_ID` et `PAYPAL_CLIENT_SECRET` dans `.env`. Le flux utilise exclusivement l’API Sandbox. Les prix existants en XAF sont convertis en USD avec `PAYPAL_XAF_PER_USD=600` (taux de test choisi pour FredRedact, pas un taux de change officiel). Utilisez un compte acheteur Sandbox pour vérifier le checkout; cette configuration ne permet pas d’encaisser de vrais paiements.
 
 ### Démarrer le service IA
 

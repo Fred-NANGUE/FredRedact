@@ -3,6 +3,7 @@
 use App\Http\Controllers\Admin\UserController as AdminUserController;
 use App\Http\Controllers\AIController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\ChatConversationController;
 use App\Http\Controllers\DocumentController;
 use App\Http\Controllers\ExportController;
 use App\Http\Controllers\InternshipController;
@@ -49,6 +50,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/research', [AIController::class, 'research']);
     });
 
+    Route::get('/ai/conversations', [ChatConversationController::class, 'index']);
+    Route::post('/ai/conversations', [ChatConversationController::class, 'store']);
+    Route::put('/ai/conversations/{conversation}', [ChatConversationController::class, 'update']);
+    Route::delete('/ai/conversations/{conversation}', [ChatConversationController::class, 'destroy']);
+    Route::get('/ai/documents', [ChatConversationController::class, 'documents']);
     Route::get('/ai/chat', [AIController::class, 'history']);
     Route::get('/reports/{report}/webographies', [AIController::class, 'webographies']);
     Route::delete('/reports/{report}/webographies/{webography}', [AIController::class, 'deleteWebography']);

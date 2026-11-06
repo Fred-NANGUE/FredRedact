@@ -49,6 +49,11 @@ return [
         'api_key' => env('CINETPAY_API_KEY'),
         'site_id' => env('CINETPAY_SITE_ID'),
     ],
+    'paypal' => [
+        'client_id' => env('PAYPAL_CLIENT_ID'),
+        'client_secret' => env('PAYPAL_CLIENT_SECRET'),
+        'xaf_per_usd' => env('PAYPAL_XAF_PER_USD', 600),
+    ],
     'frontend_url' => env('FRONTEND_URL', 'http://localhost:5173'),
 
 ];

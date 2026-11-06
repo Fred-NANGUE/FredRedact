@@ -3,6 +3,7 @@
 use App\Http\Controllers\Admin\Billing as Admin;
 use App\Http\Controllers\Billing as Student;
 use App\Http\Controllers\Billing\CinetPayController;
+use App\Http\Controllers\Billing\PayPalController;
 use App\Http\Middleware\AdminOnly;
 use Illuminate\Support\Facades\Route;
 
@@ -22,6 +23,8 @@ Route::middleware('auth:sanctum')->prefix('billing')->group(function () {
     Route::get('/subscription', [Student\SubscriptionController::class, 'current']);
     Route::get('/subscriptions', [Student\SubscriptionController::class, 'history']);
     Route::post('/checkout', [CinetPayController::class, 'checkout']);
+    Route::post('/paypal/checkout', [PayPalController::class, 'checkout']);
+    Route::post('/paypal/capture', [PayPalController::class, 'capture']);
     Route::post('/subscription/cancel', [Student\SubscriptionController::class, 'cancel']);
 
     Route::get('/tokens/balance', [Student\TokenController::class, 'balance']);

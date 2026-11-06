@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import {
   ArrowUpRight, BookOpen, Bot, CreditCard, FolderOpen, GraduationCap,
   LayoutDashboard, LogOut, Menu, Settings2, ShieldCheck, Sparkles, Users, WalletCards,
@@ -53,11 +53,13 @@ export default function App() {
   const [token, setTokenState] = useState(getToken());
   const [role, setRole] = useState(null);
   const [profile, setProfile] = useState(null);
-  const [page, setPage] = useState(new URLSearchParams(window.location.search).get('payment') === 'return' ? 'account' : 'plans');
+  const initialPayment = new URLSearchParams(window.location.search).get('payment');
+  const [page, setPage] = useState(['return', 'paypal-return'].includes(initialPayment) ? 'account' : 'plans');
   const [tokenUserId, setTokenUserId] = useState('');
   const [assistantReportId, setAssistantReportId] = useState('');
   const [error, setError] = useState('');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const paypalReturnHandled = useRef(false);
 
   const clearLogin = () => {
     setToken('');
@@ -92,7 +94,7 @@ export default function App() {
         if (!active) return;
         setRole(user.role === 'admin' ? 'admin' : 'etudiant');
         setProfile(user);
-        setPage(user.role === 'admin' ? 'dashboard' : new URLSearchParams(window.location.search).get('payment') === 'return' ? 'account' : 'internships');
+        setPage(user.role === 'admin' ? 'dashboard' : ['return', 'paypal-return'].includes(new URLSearchParams(window.location.search).get('payment')) ? 'account' : 'internships');
       })
       .catch((e) => {
         if (!active) return;
@@ -101,6 +103,38 @@ export default function App() {
       });
     return () => { active = false; };
   }, [token]);
+
+  useEffect(() => {
+    if (!token || role !== 'etudiant' || paypalReturnHandled.current) return;
+    const params = new URLSearchParams(window.location.search);
+    const payment = params.get('payment');
+    if (payment !== 'paypal-return' && payment !== 'paypal-cancel') return;
+
+    paypalReturnHandled.current = true;
+    window.history.replaceState({}, '', window.location.pathname);
+    if (payment === 'paypal-cancel') {
+      setPage('plans');
+      setError('Paiement PayPal annulé. Aucun abonnement n’a été activé.');
+      return;
+    }
+
+    const orderId = params.get('token') || params.get('order_id');
+    const subscriptionId = params.get('subscription_id');
+    if (!orderId || !subscriptionId) {
+      setPage('plans');
+      setError('Les informations de retour PayPal sont incomplètes. Contactez l’administrateur avant de recommencer le paiement.');
+      return;
+    }
+    api.post('/billing/paypal/capture', { order_id: orderId, subscription_id: subscriptionId })
+      .then(() => {
+        setPage('account');
+        setError('Paiement PayPal confirmé. Votre abonnement est activé.');
+      })
+      .catch((e) => {
+        setPage('plans');
+        setError(e.message);
+      });
+  }, [token, role]);
 
   if (!token) return <Login onLogin={handleLogin} />;
   if (!role) {
